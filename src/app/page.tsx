@@ -462,8 +462,8 @@ export default function Home() {
         {/* Header Bar */}
         <header className="flex items-center justify-between pb-8 mb-8 border-b border-slate-200/80 dark:border-slate-800/80">
           <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 via-blue-600 to-indigo-700 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
-              <FolderArchive className="w-6 h-6" />
+            <div className="w-12 h-12 rounded-2xl overflow-hidden shadow-lg shadow-indigo-500/20 shrink-0 border border-slate-200/50 dark:border-white/10">
+              <img src="/logo.svg" alt="Daily Work Repo Logo" className="w-full h-full object-cover" />
             </div>
             <div>
               <div className="flex items-center gap-2.5">

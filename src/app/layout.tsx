@@ -16,7 +16,11 @@ export const metadata: Metadata = {
   title: "Daily Work Repo & Tracker",
   description: "Catat pekerjaan harian dan simpan dokumen terkait. Cari kembali dengan mudah!",
   icons: {
-    icon: "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📝</text></svg>",
+    icon: [
+      { url: "/logo.svg", type: "image/svg+xml" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: "/logo.svg",
   },
 };
 
@@ -32,6 +36,8 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <head>
+        <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+        <link rel="apple-touch-icon" href="/logo.svg" />
         <script
           dangerouslySetInnerHTML={{
             __html: `

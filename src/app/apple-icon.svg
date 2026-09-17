@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5" />
+      <stop offset="50%" stop-color="#3B82F6" />
+      <stop offset="100%" stop-color="#1D4ED8" />
+    </linearGradient>
+    <linearGradient id="docGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#F1F5F9" />
+    </linearGradient>
+    <linearGradient id="folderGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6366F1" />
+      <stop offset="100%" stop-color="#4338CA" />
+    </linearGradient>
+    <linearGradient id="ribbonGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bgGrad)" />
+  <rect x="4" y="4" width="504" height="504" rx="124" stroke="#FFFFFF" stroke-opacity="0.2" stroke-width="8" />
+  <path d="M120 170 C120 150, 136 134, 156 134 L230 134 C244 134, 256 142, 264 154 L278 174 C284 182, 294 188, 304 188 L356 188 C376 188, 392 204, 392 224 L392 360 C392 380, 376 396, 356 396 L156 396 C136 396, 120 380, 120 360 Z" fill="url(#folderGrad)" opacity="0.65" />
+  <g>
+    <rect x="146" y="152" width="220" height="270" rx="24" fill="url(#docGrad)" />
+    <path d="M176 152 L176 210 L196 195 L216 210 L216 152 Z" fill="url(#ribbonGrad)" />
+    <rect x="236" y="174" width="100" height="12" rx="6" fill="#94A3B8" opacity="0.6" />
+    <rect x="176" y="234" width="160" height="12" rx="6" fill="#94A3B8" opacity="0.6" />
+    <rect x="176" y="266" width="160" height="12" rx="6" fill="#94A3B8" opacity="0.6" />
+    <rect x="176" y="298" width="110" height="12" rx="6" fill="#94A3B8" opacity="0.6" />
+    <circle cx="316" cy="356" r="34" fill="#3B82F6" />
+    <path d="M304 356 L312 364 L328 348" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+  <path d="M396 100 C396 118, 412 134, 430 134 C412 134, 396 150, 396 168 C396 150, 380 134, 362 134 C380 134, 396 118, 396 100 Z" fill="#FDE047" />
+</svg>
