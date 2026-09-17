@@ -21,7 +21,14 @@ import {
   FileCheck,
   FolderArchive,
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  HardDrive,
+  Cloud,
+  Copy,
+  ExternalLink,
+  FolderOpen,
+  HelpCircle,
+  Check
 } from "lucide-react";
 
 interface DailyLog {
@@ -40,13 +47,25 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"new" | "search">("new");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Attachment Mode: 'local' | 'cloud' | 'none'
+  const [attachmentMode, setAttachmentMode] = useState<"local" | "cloud" | "none">("local");
+
   // Form State
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [description, setDescription] = useState("");
   const [keywords, setKeywords] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  
+  // Local File State
+  const [localPath, setLocalPath] = useState("");
+  const [defaultFolder, setDefaultFolder] = useState("D:\\Kerjaan\\");
+  const [showDefaultFolderInput, setShowDefaultFolderInput] = useState(false);
+  const [localHelperFile, setLocalHelperFile] = useState<File | null>(null);
+
+  // Cloud File State
+  const [cloudFile, setCloudFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cloudFileInputRef = useRef<HTMLInputElement>(null);
+  const localFileInputRef = useRef<HTMLInputElement>(null);
 
   // Search & Logs State
   const [searchTerm, setSearchTerm] = useState("");
@@ -55,13 +74,20 @@ export default function Home() {
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [totalCount, setTotalCount] = useState<number>(0);
 
-  // Toast notification state
+  // Toast & Modal State
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [showHelperModal, setShowHelperModal] = useState(false);
 
-  // Initialize theme from HTML class or localStorage
+  // Initialize theme and settings from localStorage
   useEffect(() => {
     const isDark = document.documentElement.classList.contains("dark");
     setIsDarkMode(isDark);
+
+    const savedFolder = localStorage.getItem("default_local_folder");
+    if (savedFolder) {
+      setDefaultFolder(savedFolder);
+    }
   }, []);
 
   const toggleTheme = () => {
@@ -74,6 +100,11 @@ export default function Home() {
       document.documentElement.classList.remove("dark");
       localStorage.setItem("theme", "light");
     }
+  };
+
+  const handleSaveDefaultFolder = (folder: string) => {
+    setDefaultFolder(folder);
+    localStorage.setItem("default_local_folder", folder);
   };
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
@@ -94,7 +125,7 @@ export default function Home() {
       if (query.trim()) {
         const cleanQuery = query.trim();
         supabaseQuery = supabaseQuery.or(
-          `description.ilike.%${cleanQuery}%,keywords.ilike.%${cleanQuery}%,file_content.ilike.%${cleanQuery}%,file_name.ilike.%${cleanQuery}%`
+          `description.ilike.%${cleanQuery}%,keywords.ilike.%${cleanQuery}%,file_content.ilike.%${cleanQuery}%,file_name.ilike.%${cleanQuery}%,file_url.ilike.%${cleanQuery}%`
         );
       }
 
@@ -116,12 +147,11 @@ export default function Home() {
     }
   };
 
-  // Fetch count on mount and logs when tab is 'search'
   useEffect(() => {
     fetchLogs(searchTerm);
   }, [activeTab]);
 
-  // Extract all unique tags for quick filter chips
+  // Extract unique tags
   const availableTags = useMemo(() => {
     const tagsSet = new Set<string>();
     logs.forEach((log) => {
@@ -136,7 +166,7 @@ export default function Home() {
     return Array.from(tagsSet).slice(0, 10);
   }, [logs]);
 
-  // Filter logs by selected tag if set
+  // Filter logs by selected tag
   const displayedLogs = useMemo(() => {
     if (!selectedTag) return logs;
     return logs.filter((log) =>
@@ -158,11 +188,14 @@ export default function Home() {
     }
   };
 
-  const handleFileDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      setFile(e.dataTransfer.files[0]);
+  // Helper when selecting a local file to pre-fill path and extract docx text
+  const handleLocalFileSelect = async (selectedFile: File) => {
+    setLocalHelperFile(selectedFile);
+    // Suggest path based on default folder
+    const separator = defaultFolder.endsWith("\\") || defaultFolder.endsWith("/") ? "" : "\\";
+    const suggestedPath = `${defaultFolder}${separator}${selectedFile.name}`;
+    if (!localPath.trim()) {
+      setLocalPath(suggestedPath);
     }
   };
 
@@ -173,6 +206,11 @@ export default function Home() {
       return;
     }
 
+    if (attachmentMode === "local" && !localPath.trim()) {
+      showToast("Harap masukkan path lokasi file/folder lokal.", "error");
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -180,11 +218,12 @@ export default function Home() {
       let fileName = "";
       let fileContent = "";
 
-      if (file) {
-        fileName = `${Date.now()}_${file.name}`;
+      if (attachmentMode === "cloud" && cloudFile) {
+        // Upload to Cloud (Supabase Storage)
+        fileName = `${Date.now()}_${cloudFile.name}`;
         const { error: uploadError } = await supabase.storage
           .from("documents")
-          .upload(fileName, file);
+          .upload(fileName, cloudFile);
 
         if (uploadError) throw uploadError;
 
@@ -193,11 +232,11 @@ export default function Home() {
           .getPublicUrl(fileName);
         fileUrl = urlData.publicUrl;
 
-        // If it's a docx, extract content for deep search
-        if (file.name.endsWith(".docx")) {
+        // If docx, extract text
+        if (cloudFile.name.endsWith(".docx")) {
           try {
             const formData = new FormData();
-            formData.append("file", file);
+            formData.append("file", cloudFile);
             const res = await fetch("/api/extract", {
               method: "POST",
               body: formData,
@@ -206,8 +245,32 @@ export default function Home() {
               const data = await res.json();
               fileContent = data.text || "";
             }
-          } catch (extractErr) {
-            console.warn("Gagal mengekstrak teks docx:", extractErr);
+          } catch (err) {
+            console.warn("Gagal mengekstrak teks:", err);
+          }
+        }
+      } else if (attachmentMode === "local" && localPath.trim()) {
+        // Local File / Folder Reference
+        fileUrl = localPath.trim();
+        // Extract base name from path or helper file
+        const cleanBase = localPath.replace(/\\/g, "/").split("/").pop() || "Berkas Lokal";
+        fileName = localHelperFile ? localHelperFile.name : cleanBase;
+
+        // If a helper docx file was attached, index its text content for deep search
+        if (localHelperFile && localHelperFile.name.endsWith(".docx")) {
+          try {
+            const formData = new FormData();
+            formData.append("file", localHelperFile);
+            const res = await fetch("/api/extract", {
+              method: "POST",
+              body: formData,
+            });
+            if (res.ok) {
+              const data = await res.json();
+              fileContent = data.text || "";
+            }
+          } catch (err) {
+            console.warn("Gagal mengekstrak teks docx lokal:", err);
           }
         }
       }
@@ -226,13 +289,16 @@ export default function Home() {
 
       if (dbError) throw dbError;
 
-      showToast("Catatan harian berhasil disimpan ke arsip!", "success");
+      showToast("Catatan harian berhasil disimpan!", "success");
 
       // Reset form
       setDescription("");
       setKeywords("");
-      setFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      setLocalPath("");
+      setLocalHelperFile(null);
+      setCloudFile(null);
+      if (cloudFileInputRef.current) cloudFileInputRef.current.value = "";
+      if (localFileInputRef.current) localFileInputRef.current.value = "";
       setTotalCount((prev) => prev + 1);
     } catch (error: any) {
       console.error(error);
@@ -240,6 +306,32 @@ export default function Home() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const isLocalFile = (url?: string) => {
+    if (!url) return false;
+    return !url.startsWith("http://") && !url.startsWith("https://");
+  };
+
+  const copyToClipboard = (text: string, id: number) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    showToast("Path file berhasil disalin ke clipboard!", "success");
+    setTimeout(() => {
+      setCopiedId(null);
+    }, 2500);
+  };
+
+  const openInExplorer = (path: string, id: number) => {
+    // Copy path first as instant reliable backup
+    navigator.clipboard.writeText(path);
+    setCopiedId(id);
+
+    // Call custom Windows URI protocol handler
+    const uri = `dailywork://open?path=${encodeURIComponent(path)}`;
+    window.location.href = uri;
+
+    showToast("Membuka di Windows Explorer... (Path juga disalin ke clipboard)", "success");
   };
 
   const formatDateIndo = (dateStr: string) => {
@@ -298,6 +390,73 @@ export default function Home() {
         </div>
       )}
 
+      {/* Helper Modal: Cara Membuka Folder Lokal */}
+      {showHelperModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400">
+                  <FolderOpen className="w-5 h-5" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                  Fitur Buka Folder di Komputer
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowHelperModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Karena website ini berjalan di cloud, ada dua cara mudah untuk langsung membuka folder/file lokal di PC Anda:
+            </p>
+
+            <div className="space-y-3.5 text-sm">
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800">
+                <p className="font-semibold text-slate-800 dark:text-slate-200 mb-1 flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center font-bold">1</span>
+                  Cara Otomatis (Sekali Klik):
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-2.5">
+                  Klik tombol <strong>&ldquo;Buka di Explorer&rdquo;</strong>. Jika Windows memunculkan pop-up izin protokol <em>dailywork</em>, klik <strong>Open / Izinkan</strong>. Folder dan file akan langsung terbuka dan terseleksi otomatis!
+                </p>
+                <a
+                  href="/install-dailywork-protocol.bat"
+                  download="install-dailywork-protocol.bat"
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
+                >
+                  <Download className="w-3.5 h-3.5" /> Unduh Pengaktif Protokol Windows (.bat) jika belum aktif
+                </a>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800">
+                <p className="font-semibold text-slate-800 dark:text-slate-200 mb-1 flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center font-bold">2</span>
+                  Cara Manual Kilat (Tanpa Instal):
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  Klik tombol <strong>&ldquo;Salin Path&rdquo;</strong>, lalu di keyboard Anda tekan tombol{" "}
+                  <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono text-xs">Win + R</kbd>,{" "}
+                  tekan <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono text-xs">Ctrl + V</kbd>,{" "}
+                  lalu tekan <strong>Enter</strong>. File/folder langsung terbuka seketika!
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowHelperModal(false)}
+              className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 font-semibold text-xs transition-all"
+            >
+              Saya Mengerti
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Container */}
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
         {/* Header Bar */}
@@ -311,17 +470,26 @@ export default function Home() {
                 <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
                   Daily Work Repo
                 </h1>
-                <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900/40">
-                  Cloud Archive
+                <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/40">
+                  Hybrid Storage
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-                Log aktivitas harian & repositori arsip berkas kerja
+                Log pekerjaan harian & repositori berkas (Lokal PC + Cloud)
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => setShowHelperModal(true)}
+              title="Panduan Buka Folder Lokal"
+              className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-all shadow-sm flex items-center gap-1.5 text-xs font-medium"
+            >
+              <HelpCircle className="w-4 h-4 text-indigo-500" />
+              <span className="hidden sm:inline">Info Buka Folder</span>
+            </button>
+
             {/* Dark Mode Switcher */}
             <button
               onClick={toggleTheme}
@@ -377,7 +545,7 @@ export default function Home() {
                   Formulir Log Harian
                 </h2>
                 <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                  Isi apa yang Anda selesaikan hari ini beserta file lampirannya.
+                  Catat pekerjaan dan sambungkan dengan file di komputer lokal atau cloud.
                 </p>
               </div>
               <span className="hidden sm:flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 font-medium bg-indigo-50/70 dark:bg-indigo-950/40 px-3 py-1 rounded-full border border-indigo-100 dark:border-indigo-900/30">
@@ -432,8 +600,8 @@ export default function Home() {
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  className="w-full p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all h-32 resize-none placeholder:text-slate-400"
-                  placeholder="Contoh: Rapat koordinasi pembebasan lahan dengan tim teknis, menyelesaikan draf laporan progress minggu ke-3 jalan tol..."
+                  className="w-full p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all h-28 resize-none placeholder:text-slate-400"
+                  placeholder="Contoh: Rapat koordinasi pembebasan lahan Tol Probowangi, menyelesaikan draf laporan progress minggu ke-3..."
                   required
                 />
               </div>
@@ -469,72 +637,218 @@ export default function Home() {
                 )}
               </div>
 
-              {/* File Attachment Drag & Drop Zone */}
-              <div>
-                <label className="block text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-2">
-                  <UploadCloud className="w-4 h-4 text-indigo-500" />
-                  Lampirkan File Dokumen (Opsional)
-                </label>
+              {/* HYBRID STORAGE MODE SELECTOR */}
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between mb-3">
+                  <label className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                    <FolderArchive className="w-4 h-4 text-indigo-500" />
+                    Penyimpanan Dokumen Terkait
+                  </label>
+                  <span className="text-xs text-slate-400">Pilih metode yang Anda sukai</span>
+                </div>
 
-                {!file ? (
-                  <div
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setIsDragging(true);
-                    }}
-                    onDragLeave={() => setIsDragging(false)}
-                    onDrop={handleFileDrop}
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all duration-200 ${
-                      isDragging
-                        ? "border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/20 scale-[0.99]"
-                        : "border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 hover:bg-slate-100/60 dark:hover:bg-slate-900/60"
+                {/* Segmented Mode Button */}
+                <div className="grid grid-cols-3 gap-2 p-1 bg-slate-100 dark:bg-slate-950 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 mb-4">
+                  <button
+                    type="button"
+                    onClick={() => setAttachmentMode("local")}
+                    className={`flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
+                      attachmentMode === "local"
+                        ? "bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-sm"
+                        : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
                     }`}
                   >
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      onChange={(e) => setFile(e.target.files ? e.target.files[0] : null)}
-                      className="hidden"
-                      accept=".docx,.pdf,.xlsx,.xls,.csv,.txt"
-                    />
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <div className="w-10 h-10 rounded-full bg-indigo-50 dark:bg-indigo-950 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-                        <UploadCloud className="w-5 h-5" />
+                    <HardDrive className="w-4 h-4" />
+                    File Lokal di PC
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAttachmentMode("cloud")}
+                    className={`flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
+                      attachmentMode === "cloud"
+                        ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                        : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
+                    }`}
+                  >
+                    <Cloud className="w-4 h-4" />
+                    Upload ke Cloud
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAttachmentMode("none")}
+                    className={`flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
+                      attachmentMode === "none"
+                        ? "bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 shadow-sm"
+                        : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                    }`}
+                  >
+                    Tanpa File
+                  </button>
+                </div>
+
+                {/* OPTION 1: FILE LOKAL */}
+                {attachmentMode === "local" && (
+                  <div className="space-y-4 p-5 rounded-2xl bg-emerald-50/40 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+                          💻 Mode File Lokal (File Tetap di Komputer Anda)
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                          Ketikkan path lokasi file/folder di Windows Anda, atau pilih file untuk deteksi otomatis.
+                        </p>
                       </div>
-                      <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                        Klik atau seret file ke sini untuk mengunggah
-                      </p>
-                      <p className="text-xs text-slate-400 dark:text-slate-500">
-                        Mendukung .docx (isi teks otomatis dapat dicari), .pdf, .xlsx, .csv
-                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setShowDefaultFolderInput(!showDefaultFolderInput)}
+                        className="text-xs text-indigo-600 dark:text-indigo-400 font-medium hover:underline shrink-0"
+                      >
+                        {showDefaultFolderInput ? "Tutup Folder Default" : "Atur Folder Default"}
+                      </button>
+                    </div>
+
+                    {showDefaultFolderInput && (
+                      <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                        <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                          Folder Kerja Default di Komputer:
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={defaultFolder}
+                            onChange={(e) => handleSaveDefaultFolder(e.target.value)}
+                            placeholder="Contoh: D:\Kerjaan\ atau C:\Users\Dokumen\"
+                            className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-mono"
+                          />
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Saat Anda memilih file nanti, path ini akan otomatis dijadikan awalan.
+                        </p>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                        Path File atau Folder Lokal:
+                      </label>
+                      <input
+                        type="text"
+                        value={localPath}
+                        onChange={(e) => setLocalPath(e.target.value)}
+                        placeholder="Contoh: D:\Kerjaan\PPK_Yasa\Laporan_Progress.docx atau D:\Kerjaan\Probowangi\"
+                        className="w-full p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-mono focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                        required={attachmentMode === "local"}
+                      />
+                    </div>
+
+                    {/* Helper File Selector for Auto Fill & Docx Deep Search Indexing */}
+                    <div className="pt-2">
+                      <div className="flex items-center gap-3">
+                        <input
+                          ref={localFileInputRef}
+                          type="file"
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              handleLocalFileSelect(e.target.files[0]);
+                            }
+                          }}
+                          className="hidden"
+                          accept=".docx,.pdf,.xlsx,.xls,.csv,.txt"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => localFileInputRef.current?.click()}
+                          className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 text-xs font-medium flex items-center gap-1.5 shadow-sm"
+                        >
+                          <HardDrive className="w-3.5 h-3.5 text-emerald-500" />
+                          Pilih File dari Komputer (Deteksi Cepat)
+                        </button>
+
+                        {localHelperFile && (
+                          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium truncate flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5" /> Terdeteksi: {localHelperFile.name}
+                            {localHelperFile.name.endsWith(".docx") && " (Teks diindeks)"}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                ) : (
-                  <div className="flex items-center justify-between p-4 bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 rounded-2xl">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-xl bg-white dark:bg-slate-800 flex items-center justify-center shadow-sm shrink-0">
-                        {getFileIcon(file.name)}
+                )}
+
+                {/* OPTION 2: CLOUD UPLOAD */}
+                {attachmentMode === "cloud" && (
+                  <div className="p-5 rounded-2xl bg-indigo-50/40 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/40 space-y-3">
+                    <p className="text-xs font-semibold text-indigo-800 dark:text-indigo-300">
+                      ☁️ Mode Unggah ke Cloud (Bisa Diunduh dari HP / Perangkat Lain)
+                    </p>
+
+                    {!cloudFile ? (
+                      <div
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setIsDragging(true);
+                        }}
+                        onDragLeave={() => setIsDragging(false)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setIsDragging(false);
+                          if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                            setCloudFile(e.dataTransfer.files[0]);
+                          }
+                        }}
+                        onClick={() => cloudFileInputRef.current?.click()}
+                        className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all duration-200 ${
+                          isDragging
+                            ? "border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/20 scale-[0.99]"
+                            : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                        }`}
+                      >
+                        <input
+                          ref={cloudFileInputRef}
+                          type="file"
+                          onChange={(e) => setCloudFile(e.target.files ? e.target.files[0] : null)}
+                          className="hidden"
+                          accept=".docx,.pdf,.xlsx,.xls,.csv,.txt"
+                        />
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <div className="w-10 h-10 rounded-full bg-indigo-50 dark:bg-indigo-950 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                            <UploadCloud className="w-5 h-5" />
+                          </div>
+                          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                            Klik atau seret file ke sini untuk mengunggah ke Cloud
+                          </p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500">
+                            Mendukung .docx (otomatis diindeks untuk pencarian isi), .pdf, .xlsx
+                          </p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-200 truncate">
-                          {file.name}
-                        </p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                          {(file.size / 1024).toFixed(1)} KB &bull; Siap diunggah
-                        </p>
+                    ) : (
+                      <div className="flex items-center justify-between p-4 bg-white dark:bg-slate-900 border border-indigo-100 dark:border-indigo-900/50 rounded-2xl">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-slate-800 flex items-center justify-center shadow-sm shrink-0">
+                            {getFileIcon(cloudFile.name)}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-800 dark:text-slate-200 truncate">
+                              {cloudFile.name}
+                            </p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                              {(cloudFile.size / 1024).toFixed(1)} KB &bull; Siap diunggah ke Cloud
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCloudFile(null);
+                            if (cloudFileInputRef.current) cloudFileInputRef.current.value = "";
+                          }}
+                          className="p-2 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFile(null);
-                        if (fileInputRef.current) fileInputRef.current.value = "";
-                      }}
-                      className="p-2 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -548,12 +862,12 @@ export default function Home() {
                 {isSubmitting ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Menyimpan ke Cloud...
+                    Menyimpan Log...
                   </>
                 ) : (
                   <>
                     <PlusCircle className="w-4 h-4" />
-                    Simpan Log Pekerjaan
+                    Simpan Catatan Harian
                   </>
                 )}
               </button>
@@ -573,7 +887,7 @@ export default function Home() {
                     type="text"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Cari kata kunci, topik, no surat, nama dokumen..."
+                    placeholder="Cari berdasarkan kata kunci, topik rapat, nama file, atau path lokal..."
                     className="w-full pl-11 pr-10 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium"
                   />
                   {searchTerm && (
@@ -682,76 +996,150 @@ export default function Home() {
                   </button>
                 </div>
               ) : (
-                displayedLogs.map((log) => (
-                  <div
-                    key={log.id}
-                    className="bg-white dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-900/60 rounded-3xl p-6 shadow-sm hover:shadow-md transition-all duration-200"
-                  >
-                    {/* Log Header */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                      <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                          <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-                          {formatDateIndo(log.date)}
+                displayedLogs.map((log) => {
+                  const isLocal = isLocalFile(log.file_url);
+
+                  return (
+                    <div
+                      key={log.id}
+                      className="bg-white dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-900/60 rounded-3xl p-6 shadow-sm hover:shadow-md transition-all duration-200"
+                    >
+                      {/* Log Header */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                            <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+                            {formatDateIndo(log.date)}
+                          </span>
+
+                          {log.file_url && (
+                            <span
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                                isLocal
+                                  ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-900/40"
+                                  : "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-900/40"
+                              }`}
+                            >
+                              {isLocal ? (
+                                <>
+                                  <HardDrive className="w-3 h-3" /> Lokal PC
+                                </>
+                              ) : (
+                                <>
+                                  <Cloud className="w-3 h-3" /> Cloud
+                                </>
+                              )}
+                            </span>
+                          )}
+                        </div>
+
+                        <span className="text-xs text-slate-400 flex items-center gap-1 font-mono">
+                          <Clock className="w-3 h-3" />
+                          {new Date(log.created_at).toLocaleTimeString("id-ID", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
                         </span>
                       </div>
-                      <span className="text-xs text-slate-400 flex items-center gap-1 font-mono">
-                        <Clock className="w-3 h-3" />
-                        {new Date(log.created_at).toLocaleTimeString("id-ID", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                    </div>
 
-                    {/* Description */}
-                    <p className="text-sm sm:text-base text-slate-800 dark:text-slate-200 font-normal leading-relaxed whitespace-pre-wrap mb-4">
-                      {log.description}
-                    </p>
+                      {/* Description */}
+                      <p className="text-sm sm:text-base text-slate-800 dark:text-slate-200 font-normal leading-relaxed whitespace-pre-wrap mb-4">
+                        {log.description}
+                      </p>
 
-                    {/* Keywords Tag Badges */}
-                    {log.keywords && (
-                      <div className="flex flex-wrap gap-1.5 mb-4">
-                        {log.keywords
-                          .split(/[,#]/)
-                          .map((t) => t.trim())
-                          .filter(Boolean)
-                          .map((kw, i) => (
-                            <span
-                              key={i}
-                              onClick={() => handleTagClick(kw)}
-                              className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950 dark:hover:text-indigo-300 transition-colors cursor-pointer"
-                            >
-                              #{kw}
-                            </span>
-                          ))}
-                      </div>
-                    )}
-
-                    {/* Attached File Download Button & Info */}
-                    {log.file_url && (
-                      <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0">
-                            {getFileIcon(log.file_name)}
-                          </div>
-                          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 truncate max-w-xs sm:max-w-md">
-                            {getCleanFileName(log.file_name)}
-                          </span>
+                      {/* Keywords Tag Badges */}
+                      {log.keywords && (
+                        <div className="flex flex-wrap gap-1.5 mb-4">
+                          {log.keywords
+                            .split(/[,#]/)
+                            .map((t) => t.trim())
+                            .filter(Boolean)
+                            .map((kw, i) => (
+                              <span
+                                key={i}
+                                onClick={() => handleTagClick(kw)}
+                                className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950 dark:hover:text-indigo-300 transition-colors cursor-pointer"
+                              >
+                                #{kw}
+                              </span>
+                            ))}
                         </div>
-                        <a
-                          href={log.file_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200/60 dark:border-indigo-800/50 transition-colors"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          Unduh Berkas
-                        </a>
-                      </div>
-                    )}
-                  </div>
-                ))
+                      )}
+
+                      {/* Attached File Bar: LOCAL vs CLOUD */}
+                      {log.file_url && (
+                        <div className="pt-3.5 border-t border-slate-100 dark:border-slate-800/80">
+                          {isLocal ? (
+                            /* Local File Card */
+                            <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40">
+                              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                <div className="w-8 h-8 rounded-lg bg-white dark:bg-slate-800 flex items-center justify-center shrink-0 shadow-xs">
+                                  {getFileIcon(log.file_name)}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                    {log.file_name || "File Lokal"}
+                                  </p>
+                                  <p className="text-[11px] font-mono text-emerald-700 dark:text-emerald-400 truncate max-w-xs sm:max-w-md">
+                                    {log.file_url}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => openInExplorer(log.file_url!, log.id)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-colors"
+                                >
+                                  <FolderOpen className="w-3.5 h-3.5" />
+                                  Buka di Explorer
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => copyToClipboard(log.file_url!, log.id)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 transition-colors"
+                                >
+                                  {copiedId === log.id ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-500" />
+                                  ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                  )}
+                                  Salin Path
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* Cloud File Card */
+                            <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/40">
+                              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                <div className="w-8 h-8 rounded-lg bg-white dark:bg-slate-800 flex items-center justify-center shrink-0 shadow-xs">
+                                  {getFileIcon(log.file_name)}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                    {getCleanFileName(log.file_name)}
+                                  </p>
+                                  <p className="text-[11px] text-slate-400">Tersimpan di Cloud Storage</p>
+                                </div>
+                              </div>
+
+                              <a
+                                href={log.file_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-colors"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                Unduh Berkas
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>
