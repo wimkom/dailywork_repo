@@ -35,13 +35,16 @@ import {
   ListTodo,
   CheckCircle,
   AlertTriangle,
+  FolderPlus,
+  Briefcase,
+  Archive,
+  Palette,
+  ExternalLink,
   ChevronRight,
-  TrendingUp,
-  FileCode,
-  Share2
+  Database
 } from "lucide-react";
 
-interface DailyLog {
+export interface DailyLog {
   id: number;
   created_at: string;
   date: string;
@@ -54,10 +57,50 @@ interface DailyLog {
   status?: "done" | "in_progress" | "todo" | string;
 }
 
+export interface ProjectItem {
+  id?: number | string;
+  name: string;
+  description?: string;
+  color: string;
+  status: "active" | "archived";
+  created_at?: string;
+}
+
+const DEFAULT_PROJECTS: ProjectItem[] = [
+  { name: "Umum", description: "Aktivitas rutin & administrasi umum", color: "slate", status: "active" },
+  { name: "Tol Probowangi", description: "Pekerjaan Jalan Tol Probolinggo - Banyuwangi", color: "indigo", status: "active" },
+  { name: "Pembebasan Lahan", description: "Pengadaan tanah dan proses ganti rugi", color: "emerald", status: "active" },
+  { name: "PPK Yasa", description: "Koordinasi teknis & administrasi PPK Yasa", color: "amber", status: "active" },
+];
+
+const AVAILABLE_COLORS = [
+  { id: "indigo", label: "Indigo", hex: "#4f46e5" },
+  { id: "blue", label: "Biru", hex: "#2563eb" },
+  { id: "emerald", label: "Hijau Emerald", hex: "#059669" },
+  { id: "amber", label: "Kuning Amber", hex: "#d97706" },
+  { id: "rose", label: "Merah Rose", hex: "#e11d48" },
+  { id: "purple", label: "Ungu", hex: "#9333ea" },
+  { id: "cyan", label: "Cyan / Toska", hex: "#0891b2" },
+  { id: "slate", label: "Abu-abu Slate", hex: "#475569" },
+];
+
 export default function Home() {
   const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"new" | "search" | "stats">("new");
+  const [activeTab, setActiveTab] = useState<"new" | "search" | "projects" | "stats">("new");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Projects State
+  const [projects, setProjects] = useState<ProjectItem[]>(DEFAULT_PROJECTS);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
+  const [editingProject, setEditingProject] = useState<ProjectItem | null>(null);
+  const [isAddingProject, setIsAddingProject] = useState(false);
+  const [deletingProject, setDeletingProject] = useState<ProjectItem | null>(null);
+  const [newProjectForm, setNewProjectForm] = useState<ProjectItem>({
+    name: "",
+    description: "",
+    color: "indigo",
+    status: "active",
+  });
 
   // Attachment Mode: 'local' | 'cloud' | 'none'
   const [attachmentMode, setAttachmentMode] = useState<"local" | "cloud" | "none">("local");
@@ -67,8 +110,6 @@ export default function Home() {
   const [description, setDescription] = useState("");
   const [keywords, setKeywords] = useState("");
   const [project, setProject] = useState("Umum");
-  const [customProject, setCustomProject] = useState("");
-  const [isCustomProject, setIsCustomProject] = useState(false);
   const [status, setStatus] = useState<"done" | "in_progress" | "todo">("done");
 
   // Local File State
@@ -97,12 +138,13 @@ export default function Home() {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [showHelperModal, setShowHelperModal] = useState(false);
-  
-  // Edit State
+  const [showSqlGuide, setShowSqlGuide] = useState(false);
+
+  // Edit Log State
   const [editingLog, setEditingLog] = useState<DailyLog | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // Delete State
+  // Delete Log State
   const [deletingLogId, setDeletingLogId] = useState<number | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -122,6 +164,8 @@ export default function Home() {
     if (savedFolder) {
       setDefaultFolder(savedFolder);
     }
+
+    fetchProjects();
   }, []);
 
   const toggleTheme = () => {
@@ -148,6 +192,203 @@ export default function Home() {
     }, 4000);
   };
 
+  // FETCH PROJECTS (from Supabase or fallback localStorage)
+  const fetchProjects = async () => {
+    setIsLoadingProjects(true);
+    let loadedFromDb = false;
+    try {
+      const { data, error } = await supabase
+        .from("projects")
+        .select("*")
+        .order("name", { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        setProjects(data);
+        loadedFromDb = true;
+      }
+    } catch (err) {
+      // Table might not exist yet
+    }
+
+    if (!loadedFromDb) {
+      const saved = localStorage.getItem("daily_work_managed_projects");
+      if (saved) {
+        try {
+          setProjects(JSON.parse(saved));
+        } catch (e) {
+          setProjects(DEFAULT_PROJECTS);
+        }
+      } else {
+        setProjects(DEFAULT_PROJECTS);
+      }
+    }
+    setIsLoadingProjects(false);
+  };
+
+  const saveProjectsToStorage = (updatedList: ProjectItem[]) => {
+    setProjects(updatedList);
+    localStorage.setItem("daily_work_managed_projects", JSON.stringify(updatedList));
+  };
+
+  // ADD NEW PROJECT
+  const handleAddProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProjectForm.name.trim()) {
+      showToast("Nama proyek tidak boleh kosong.", "error");
+      return;
+    }
+
+    const trimmedName = newProjectForm.name.trim();
+    if (projects.some((p) => p.name.toLowerCase() === trimmedName.toLowerCase())) {
+      showToast("Proyek dengan nama tersebut sudah ada.", "error");
+      return;
+    }
+
+    const newProj: ProjectItem = {
+      name: trimmedName,
+      description: newProjectForm.description?.trim() || "",
+      color: newProjectForm.color || "indigo",
+      status: newProjectForm.status || "active",
+      created_at: new Date().toISOString(),
+    };
+
+    // Try saving to Supabase
+    try {
+      const { error } = await supabase.from("projects").insert([newProj]);
+      if (error) throw error;
+    } catch (err) {
+      // Supabase table might not exist; localStorage handles it
+    }
+
+    const updated = [...projects, newProj];
+    saveProjectsToStorage(updated);
+    setProject(newProj.name);
+    setNewProjectForm({ name: "", description: "", color: "indigo", status: "active" });
+    setIsAddingProject(false);
+    showToast(`Proyek "${newProj.name}" berhasil ditambahkan!`, "success");
+  };
+
+  // UPDATE / EDIT PROJECT
+  const handleUpdateProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingProject || !editingProject.name.trim()) return;
+
+    const oldProject = projects.find((p) => p.id === editingProject.id || p.name === editingProject.name);
+    const oldName = oldProject?.name || editingProject.name;
+    const newName = editingProject.name.trim();
+
+    // 1. If project name changed, update existing logs in daily_logs!
+    if (oldName !== newName) {
+      try {
+        await supabase
+          .from("daily_logs")
+          .update({ project: newName })
+          .eq("project", oldName);
+        
+        // Update state in memory
+        setLogs((prev) =>
+          prev.map((l) => (l.project === oldName ? { ...l, project: newName } : l))
+        );
+      } catch (logErr) {
+        console.warn("Gagal memperbarui relasi log lama:", logErr);
+      }
+    }
+
+    // 2. Update projects table
+    try {
+      if (editingProject.id) {
+        await supabase
+          .from("projects")
+          .update({
+            name: newName,
+            description: editingProject.description,
+            color: editingProject.color,
+            status: editingProject.status,
+          })
+          .eq("id", editingProject.id);
+      } else {
+        await supabase
+          .from("projects")
+          .update({
+            name: newName,
+            description: editingProject.description,
+            color: editingProject.color,
+            status: editingProject.status,
+          })
+          .eq("name", oldName);
+      }
+    } catch (err) {
+      // localStorage fallback
+    }
+
+    const updated = projects.map((p) =>
+      (p.id && p.id === editingProject.id) || p.name === oldName
+        ? { ...editingProject, name: newName }
+        : p
+    );
+    saveProjectsToStorage(updated);
+
+    if (project === oldName) {
+      setProject(newName);
+    }
+    setEditingProject(null);
+    showToast(`Proyek "${newName}" berhasil diperbarui!`, "success");
+    fetchLogs(searchTerm);
+  };
+
+  // DELETE PROJECT
+  const handleDeleteProject = async () => {
+    if (!deletingProject) return;
+
+    if (deletingProject.name.toLowerCase() === "umum") {
+      showToast("Proyek 'Umum' adalah default dan tidak dapat dihapus.", "error");
+      setDeletingProject(null);
+      return;
+    }
+
+    const targetName = deletingProject.name;
+
+    // 1. Safely reassign all logs with this project to 'Umum'
+    try {
+      await supabase
+        .from("daily_logs")
+        .update({ project: "Umum" })
+        .eq("project", targetName);
+
+      setLogs((prev) =>
+        prev.map((l) => (l.project === targetName ? { ...l, project: "Umum" } : l))
+      );
+    } catch (logErr) {
+      console.warn("Gagal mengalihkan log ke Umum:", logErr);
+    }
+
+    // 2. Delete from Supabase
+    try {
+      if (deletingProject.id) {
+        await supabase.from("projects").delete().eq("id", deletingProject.id);
+      } else {
+        await supabase.from("projects").delete().eq("name", targetName);
+      }
+    } catch (err) {
+      // localStorage fallback
+    }
+
+    const updated = projects.filter((p) => p.name !== targetName);
+    saveProjectsToStorage(updated);
+
+    if (project === targetName) {
+      setProject("Umum");
+    }
+    if (selectedProject === targetName) {
+      setSelectedProject(null);
+    }
+
+    setDeletingProject(null);
+    showToast(`Proyek "${targetName}" dihapus. Catatan dialihkan ke "Umum".`, "success");
+    fetchLogs(searchTerm);
+  };
+
+  // FETCH LOGS
   const fetchLogs = async (query: string = "") => {
     setIsLoadingLogs(true);
     try {
@@ -165,7 +406,6 @@ export default function Home() {
 
       const { data, error } = await supabaseQuery;
       if (error) {
-        // Fallback without project column if not created yet
         const retry = await supabase
           .from("daily_logs")
           .select("id, created_at, date, description, keywords, file_url, file_name, file_content")
@@ -195,17 +435,6 @@ export default function Home() {
     fetchLogs(searchTerm);
   }, [activeTab]);
 
-  // Extract unique projects
-  const availableProjects = useMemo(() => {
-    const projectsSet = new Set<string>(["Umum", "Tol Probowangi", "Pembebasan Lahan", "PPK Yasa"]);
-    logs.forEach((log) => {
-      if (log.project) {
-        projectsSet.add(log.project);
-      }
-    });
-    return Array.from(projectsSet);
-  }, [logs]);
-
   // Extract unique tags
   const availableTags = useMemo(() => {
     const tagsSet = new Set<string>();
@@ -221,7 +450,7 @@ export default function Home() {
     return Array.from(tagsSet).slice(0, 10);
   }, [logs]);
 
-  // Filter logs by selected tag, project, status, and date
+  // Filter logs
   const displayedLogs = useMemo(() => {
     return logs.filter((log) => {
       if (selectedTag && !log.keywords?.toLowerCase().includes(selectedTag.toLowerCase())) {
@@ -240,7 +469,50 @@ export default function Home() {
     });
   }, [logs, selectedTag, selectedProject, selectedStatus, selectedDateFilter]);
 
-  // Statistics calculation
+  // Map project names to their color badges
+  const projectColorMap = useMemo(() => {
+    const map: { [name: string]: string } = {};
+    projects.forEach((p) => {
+      map[p.name] = p.color || "indigo";
+    });
+    return map;
+  }, [projects]);
+
+  const getProjectColorClass = (colorName: string = "indigo") => {
+    switch (colorName.toLowerCase()) {
+      case "emerald":
+        return "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border-emerald-200/60 dark:border-emerald-900/40";
+      case "blue":
+        return "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 border-blue-200/60 dark:border-blue-900/40";
+      case "amber":
+        return "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border-amber-200/60 dark:border-amber-900/40";
+      case "rose":
+        return "bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border-rose-200/60 dark:border-rose-900/40";
+      case "purple":
+        return "bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-400 border-purple-200/60 dark:border-purple-900/40";
+      case "cyan":
+        return "bg-cyan-50 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-400 border-cyan-200/60 dark:border-cyan-900/40";
+      case "slate":
+        return "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700";
+      default:
+        return "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border-indigo-200/60 dark:border-indigo-900/40";
+    }
+  };
+
+  const getProjectBarColor = (colorName: string = "indigo") => {
+    switch (colorName.toLowerCase()) {
+      case "emerald": return "bg-emerald-500";
+      case "blue": return "bg-blue-500";
+      case "amber": return "bg-amber-500";
+      case "rose": return "bg-rose-500";
+      case "purple": return "bg-purple-500";
+      case "cyan": return "bg-cyan-500";
+      case "slate": return "bg-slate-500";
+      default: return "bg-indigo-600";
+    }
+  };
+
+  // Stats calculation
   const stats = useMemo(() => {
     const total = logs.length;
     const completed = logs.filter((l) => (l.status || "done") === "done").length;
@@ -248,23 +520,28 @@ export default function Home() {
     const todo = logs.filter((l) => l.status === "todo").length;
     const withFiles = logs.filter((l) => !!l.file_url).length;
 
-    // Project breakdown
-    const projectCounts: { [key: string]: number } = {};
-    logs.forEach((l) => {
-      const p = l.project || "Umum";
-      projectCounts[p] = (projectCounts[p] || 0) + 1;
+    const projectCounts: { [key: string]: { total: number; done: number; inProgress: number } } = {};
+    projects.forEach((p) => {
+      projectCounts[p.name] = { total: 0, done: 0, inProgress: 0 };
     });
 
-    // Activity heatmap map (date -> count) for last 60 days
+    logs.forEach((l) => {
+      const p = l.project || "Umum";
+      if (!projectCounts[p]) projectCounts[p] = { total: 0, done: 0, inProgress: 0 };
+      projectCounts[p].total += 1;
+      if ((l.status || "done") === "done") projectCounts[p].done += 1;
+      else if (l.status === "in_progress") projectCounts[p].inProgress += 1;
+    });
+
     const activityMap: { [dateStr: string]: number } = {};
     logs.forEach((l) => {
       activityMap[l.date] = (activityMap[l.date] || 0) + 1;
     });
 
     return { total, completed, inProgress, todo, withFiles, projectCounts, activityMap };
-  }, [logs]);
+  }, [logs, projects]);
 
-  // Heatmap days generation (last 42 days / 6 weeks)
+  // Heatmap generation
   const heatmapDays = useMemo(() => {
     const days: { dateStr: string; label: string; count: number }[] = [];
     const today = new Date();
@@ -296,6 +573,7 @@ export default function Home() {
     }
   };
 
+  // SUBMIT NEW LOG
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!description.trim()) {
@@ -367,9 +645,6 @@ export default function Home() {
         }
       }
 
-      const activeProject = isCustomProject && customProject.trim() ? customProject.trim() : project;
-
-      // Insert into Supabase with automatic fallback if columns are still pending in SQL
       const insertPayload: any = {
         date,
         description: description.trim(),
@@ -377,14 +652,13 @@ export default function Home() {
         file_name: fileName,
         file_url: fileUrl,
         file_content: fileContent,
-        project: activeProject,
+        project: project,
         status: status,
       };
 
       const { error: dbError } = await supabase.from("daily_logs").insert([insertPayload]);
 
       if (dbError) {
-        // Fallback: retry without project and status if columns don't exist in Supabase yet
         delete insertPayload.project;
         delete insertPayload.status;
         const retry = await supabase.from("daily_logs").insert([insertPayload]);
@@ -411,7 +685,7 @@ export default function Home() {
     }
   };
 
-  // Quick Status Toggle on Card
+  // Toggle log status
   const toggleLogStatus = async (log: DailyLog) => {
     const nextStatus = (log.status || "done") === "done" ? "in_progress" : "done";
     try {
@@ -435,7 +709,7 @@ export default function Home() {
     }
   };
 
-  // Edit Log Execution
+  // Update Log
   const handleUpdateLog = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingLog) return;
@@ -478,7 +752,7 @@ export default function Home() {
     }
   };
 
-  // Delete Log Execution
+  // Delete Log
   const handleDeleteLog = async () => {
     if (!deletingLogId) return;
     setIsDeleting(true);
@@ -639,6 +913,250 @@ export default function Home() {
         </div>
       )}
 
+      {/* MODAL: ADD NEW PROJECT */}
+      {isAddingProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FolderPlus className="w-5 h-5 text-indigo-500" />
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Tambah Proyek Baru</h3>
+              </div>
+              <button
+                onClick={() => setIsAddingProject(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddProject} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-slate-600 dark:text-slate-300">
+                  Nama Proyek / Kategori
+                </label>
+                <input
+                  type="text"
+                  value={newProjectForm.name}
+                  onChange={(e) => setNewProjectForm({ ...newProjectForm, name: e.target.value })}
+                  placeholder="Contoh: Tol Kediri-Tulungagung"
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm font-medium focus:ring-2 focus:ring-indigo-500/20"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-slate-600 dark:text-slate-300">
+                  Deskripsi Singkat (Opsional)
+                </label>
+                <textarea
+                  value={newProjectForm.description}
+                  onChange={(e) => setNewProjectForm({ ...newProjectForm, description: e.target.value })}
+                  placeholder="Tulis ringkasan cakupan proyek atau pekerjaan..."
+                  className="w-full p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs h-20 resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-2 text-slate-600 dark:text-slate-300">
+                  Warna Lencana
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {AVAILABLE_COLORS.map((col) => (
+                    <button
+                      key={col.id}
+                      type="button"
+                      onClick={() => setNewProjectForm({ ...newProjectForm, color: col.id })}
+                      className={`p-2 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-all ${
+                        newProjectForm.color === col.id
+                          ? "ring-2 ring-indigo-500 border-transparent bg-indigo-50 dark:bg-indigo-950/50"
+                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
+                      }`}
+                    >
+                      <span
+                        className="w-3 h-3 rounded-full shrink-0"
+                        style={{ backgroundColor: col.hex }}
+                      />
+                      <span className="truncate text-[11px]">{col.label.split(" ")[0]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddingProject(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-600 dark:text-slate-300"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-sm"
+                >
+                  Simpan Proyek
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT PROJECT */}
+      {editingProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-indigo-500" />
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Edit Proyek</h3>
+              </div>
+              <button
+                onClick={() => setEditingProject(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateProject} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-slate-600 dark:text-slate-300">
+                  Nama Proyek
+                </label>
+                <input
+                  type="text"
+                  value={editingProject.name}
+                  onChange={(e) => setEditingProject({ ...editingProject, name: e.target.value })}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm font-medium"
+                  required
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Catatan: Mengubah nama proyek otomatis memperbarui semua riwayat log pekerjaan terkait.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-slate-600 dark:text-slate-300">
+                  Deskripsi
+                </label>
+                <textarea
+                  value={editingProject.description || ""}
+                  onChange={(e) => setEditingProject({ ...editingProject, description: e.target.value })}
+                  className="w-full p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs h-20 resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-2 text-slate-600 dark:text-slate-300">
+                  Warna Lencana
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {AVAILABLE_COLORS.map((col) => (
+                    <button
+                      key={col.id}
+                      type="button"
+                      onClick={() => setEditingProject({ ...editingProject, color: col.id })}
+                      className={`p-2 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-all ${
+                        editingProject.color === col.id
+                          ? "ring-2 ring-indigo-500 border-transparent bg-indigo-50 dark:bg-indigo-950/50"
+                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
+                      }`}
+                    >
+                      <span
+                        className="w-3 h-3 rounded-full shrink-0"
+                        style={{ backgroundColor: col.hex }}
+                      />
+                      <span className="truncate text-[11px]">{col.label.split(" ")[0]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-slate-600 dark:text-slate-300">
+                  Status Proyek
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingProject({ ...editingProject, status: "active" })}
+                    className={`p-2.5 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 ${
+                      editingProject.status === "active"
+                        ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-semibold"
+                        : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-500"
+                    }`}
+                  >
+                    <CheckCircle className="w-3.5 h-3.5" /> Aktif
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingProject({ ...editingProject, status: "archived" })}
+                    className={`p-2.5 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 ${
+                      editingProject.status === "archived"
+                        ? "border-slate-500 bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-semibold"
+                        : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-500"
+                    }`}
+                  >
+                    <Archive className="w-3.5 h-3.5" /> Diarsipkan
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingProject(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-600 dark:text-slate-300"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-sm"
+                >
+                  Simpan Perubahan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: DELETE PROJECT CONFIRMATION */}
+      {deletingProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
+            <div className="w-12 h-12 rounded-full bg-rose-50 dark:bg-rose-950/60 text-rose-500 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                Hapus Proyek &ldquo;{deletingProject.name}&rdquo;?
+              </h3>
+              <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                Proyek ini akan dihapus. Semua log kerja yang tercatat di proyek ini akan **dialihkan secara aman ke proyek &ldquo;Umum&rdquo;** agar tidak hilang.
+              </p>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => setDeletingProject(null)}
+                className="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-600 dark:text-slate-300"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleDeleteProject}
+                className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold"
+              >
+                Ya, Hapus
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: AI SUMMARIZER */}
       {showAiModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in">
@@ -777,12 +1295,17 @@ export default function Home() {
                   <label className="block text-xs font-semibold mb-1 text-slate-600 dark:text-slate-300">
                     Proyek
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={editingLog.project || "Umum"}
                     onChange={(e) => setEditingLog({ ...editingLog, project: e.target.value })}
                     className="w-full p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs"
-                  />
+                  >
+                    {projects.map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -988,7 +1511,7 @@ export default function Home() {
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-                Log pekerjaan harian, arsip file hybrid, manajemen proyek & rangkuman AI
+                Log pekerjaan harian, arsip berkas hybrid & manajemen multi-proyek
               </p>
             </div>
           </div>
@@ -999,7 +1522,7 @@ export default function Home() {
               className="p-2.5 px-3 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-500/20 hover:opacity-95 transition-all active:scale-95"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>Rangkum AI</span>
+              <span className="hidden sm:inline">Rangkum AI</span>
             </button>
 
             <button
@@ -1017,53 +1540,62 @@ export default function Home() {
               className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-all shadow-sm active:scale-95"
             >
               {isDarkMode ? (
-                <Sun className="w-4 h-4 text-amber-400" />
+                <Sun className="w-5 h-5 text-amber-400" />
               ) : (
-                <Moon className="w-4 h-4 text-slate-700" />
+                <Moon className="w-5 h-5 text-slate-700" />
               )}
             </button>
           </div>
         </header>
 
-        {/* Tab Navigation Segmented Control */}
-        <div className="flex p-1.5 mb-8 rounded-2xl bg-slate-200/60 dark:bg-slate-900/90 border border-slate-200/60 dark:border-slate-800 max-w-lg mx-auto sm:mx-0">
+        {/* Tab Navigation Segmented Control - 4 Tabs */}
+        <div className="grid grid-cols-4 gap-1 p-1.5 mb-8 rounded-2xl bg-slate-200/60 dark:bg-slate-900/90 border border-slate-200/60 dark:border-slate-800 max-w-xl mx-auto sm:mx-0">
           <button
             onClick={() => setActiveTab("new")}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 ${
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 ${
               activeTab === "new"
                 ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-white shadow-sm"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
             }`}
           >
             <PlusCircle className="w-4 h-4" />
-            Input Log
+            <span className="truncate">Input Log</span>
           </button>
+
           <button
             onClick={() => setActiveTab("search")}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 ${
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 ${
               activeTab === "search"
                 ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-white shadow-sm"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
             }`}
           >
             <Search className="w-4 h-4" />
-            Cari & Arsip
-            {totalCount > 0 && (
-              <span className="ml-1 px-1.5 py-0.2 text-[10px] font-semibold rounded-full bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400">
-                {totalCount}
-              </span>
-            )}
+            <span className="truncate">Cari & Arsip</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab("projects")}
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 ${
+              activeTab === "projects"
+                ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-white shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            <span className="truncate">Kelola Proyek</span>
+          </button>
+
           <button
             onClick={() => setActiveTab("stats")}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 ${
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 ${
               activeTab === "stats"
                 ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-white shadow-sm"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
             }`}
           >
             <BarChart3 className="w-4 h-4" />
-            Statistik & Heatmap
+            <span className="truncate">Statistik</span>
           </button>
         </div>
 
@@ -1076,7 +1608,7 @@ export default function Home() {
                   Formulir Log Harian
                 </h2>
                 <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                  Catat pekerjaan, pilih status, dan kaitkan dengan berkas proyek.
+                  Catat pekerjaan, pilih proyek, dan hubungkan dengan berkas dokumen.
                 </p>
               </div>
               <span className="hidden sm:flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 font-medium bg-indigo-50/70 dark:bg-indigo-950/40 px-3 py-1 rounded-full border border-indigo-100 dark:border-indigo-900/30">
@@ -1111,44 +1643,35 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Project / Category Input */}
+                {/* Project Selector with Quick Add */}
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center justify-between">
                     <span className="flex items-center gap-2">
                       <Layers className="w-4 h-4 text-indigo-500" />
-                      Nama Proyek / Kategori
+                      Nama Proyek
                     </span>
                     <button
                       type="button"
-                      onClick={() => setIsCustomProject(!isCustomProject)}
-                      className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-normal"
+                      onClick={() => setIsAddingProject(true)}
+                      className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-semibold flex items-center gap-1"
                     >
-                      {isCustomProject ? "Pilih dari Daftar" : "+ Proyek Baru"}
+                      <PlusCircle className="w-3 h-3" /> Tambah Proyek
                     </button>
                   </label>
 
-                  {isCustomProject ? (
-                    <input
-                      type="text"
-                      value={customProject}
-                      onChange={(e) => setCustomProject(e.target.value)}
-                      placeholder="Ketik nama proyek baru (misal: Tol Kediri-Tulungagung)"
-                      className="w-full p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm font-medium focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                      required
-                    />
-                  ) : (
-                    <select
-                      value={project}
-                      onChange={(e) => setProject(e.target.value)}
-                      className="w-full p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm font-medium focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                    >
-                      {availableProjects.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
+                  <select
+                    value={project}
+                    onChange={(e) => setProject(e.target.value)}
+                    className="w-full p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm font-medium focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                  >
+                    {projects
+                      .filter((p) => p.status !== "archived" || p.name === project)
+                      .map((p) => (
+                        <option key={p.name} value={p.name}>
+                          {p.name} {p.status === "archived" ? "(Diarsipkan)" : ""}
                         </option>
                       ))}
-                    </select>
-                  )}
+                  </select>
                 </div>
               </div>
 
@@ -1212,7 +1735,7 @@ export default function Home() {
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   className="w-full p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 h-28 resize-none placeholder:text-slate-400"
-                  placeholder="Contoh: Rapat koordinasi dengan PPK Yasa mengenai peta pembebasan lahan Tol Probowangi Seksi 2..."
+                  placeholder="Contoh: Rapat koordinasi dengan tim teknis PPK Yasa terkait verifikasi berkas ganti rugi Tol Probowangi Seksi 2..."
                   required
                 />
               </div>
@@ -1526,9 +2049,9 @@ export default function Home() {
                     className="bg-transparent border-none text-xs font-medium text-slate-700 dark:text-slate-300 focus:outline-none"
                   >
                     <option value="">Semua Proyek</option>
-                    {availableProjects.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
+                    {projects.map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.name}
                       </option>
                     ))}
                   </select>
@@ -1652,6 +2175,7 @@ export default function Home() {
                   const isLocal = isLocalFile(log.file_url);
                   const isDone = (log.status || "done") === "done";
                   const isInProgress = log.status === "in_progress";
+                  const projColor = projectColorMap[log.project || "Umum"] || "indigo";
 
                   return (
                     <div
@@ -1666,8 +2190,12 @@ export default function Home() {
                             {formatDateIndo(log.date)}
                           </span>
 
-                          {/* Project Badge */}
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-900/40">
+                          {/* Dynamic Color Project Badge */}
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${getProjectColorClass(
+                              projColor
+                            )}`}
+                          >
                             <Layers className="w-3 h-3" />
                             {log.project || "Umum"}
                           </span>
@@ -1823,7 +2351,172 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 3: STATISTIK & KALENDER HEATMAP */}
+        {/* TAB 3: KELOLA PROYEK (PROJECT MANAGEMENT) */}
+        {activeTab === "projects" && (
+          <div className="space-y-6">
+            {/* Header Proyek */}
+            <div className="flex flex-wrap items-center justify-between gap-4 p-6 rounded-3xl bg-white dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 shadow-sm backdrop-blur-xl">
+              <div>
+                <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-indigo-500" />
+                  Daftar Proyek Kerja
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                  Atur proyek, kategori, warna lencana, serta lihat progres masing-masing pekerjaan.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsAddingProject(true)}
+                  className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
+                >
+                  <FolderPlus className="w-4 h-4" />
+                  Tambah Proyek
+                </button>
+              </div>
+            </div>
+
+            {/* Projects Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {projects.map((p) => {
+                const projectStats = stats.projectCounts[p.name] || { total: 0, done: 0, inProgress: 0 };
+                const isArchived = p.status === "archived";
+
+                return (
+                  <div
+                    key={p.name}
+                    className={`p-6 rounded-3xl border transition-all duration-200 flex flex-col justify-between ${
+                      isArchived
+                        ? "bg-slate-100/60 dark:bg-slate-950/40 border-slate-200 dark:border-slate-800 opacity-75"
+                        : "bg-white dark:bg-slate-900/80 border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md"
+                    }`}
+                  >
+                    <div>
+                      {/* Top Row: Name & Status */}
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${getProjectColorClass(
+                              p.color
+                            )}`}
+                          >
+                            <span
+                              className={`w-2 h-2 rounded-full ${getProjectBarColor(p.color)}`}
+                            />
+                            {p.name}
+                          </span>
+                          {isArchived && (
+                            <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-md bg-slate-200 dark:bg-slate-800 text-slate-600">
+                              Diarsipkan
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Edit & Delete Action Buttons */}
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setEditingProject(p)}
+                            title="Edit Proyek"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          {p.name.toLowerCase() !== "umum" && (
+                            <button
+                              onClick={() => setDeletingProject(p)}
+                              title="Hapus Proyek"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Description */}
+                      <p className="text-xs text-slate-600 dark:text-slate-400 mt-2 mb-4 leading-relaxed line-clamp-2">
+                        {p.description || "Tidak ada deskripsi tambahan."}
+                      </p>
+                    </div>
+
+                    {/* Stats & Quick Filter */}
+                    <div className="pt-4 border-t border-slate-100 dark:border-slate-800/80 space-y-3">
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-950/60">
+                          <p className="text-[10px] text-slate-400">Total Log</p>
+                          <p className="text-sm font-bold text-slate-800 dark:text-slate-200 mt-0.5">
+                            {projectStats.total}
+                          </p>
+                        </div>
+                        <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-950/60">
+                          <p className="text-[10px] text-emerald-500">Selesai</p>
+                          <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                            {projectStats.done}
+                          </p>
+                        </div>
+                        <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-950/60">
+                          <p className="text-[10px] text-amber-500">Berjalan</p>
+                          <p className="text-sm font-bold text-amber-500 mt-0.5">
+                            {projectStats.inProgress}
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          setSelectedProject(p.name);
+                          setActiveTab("search");
+                        }}
+                        className="w-full py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950 hover:text-indigo-600 dark:hover:text-indigo-400 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                      >
+                        <Search className="w-3.5 h-3.5" />
+                        Buka Arsip Proyek Ini
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Supabase Database Setup Accordion / Tip */}
+            <div className="p-5 rounded-3xl bg-slate-100/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 text-xs space-y-2">
+              <div
+                onClick={() => setShowSqlGuide(!showSqlGuide)}
+                className="flex items-center justify-between cursor-pointer"
+              >
+                <div className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-300">
+                  <Database className="w-4 h-4 text-indigo-500" />
+                  Tips: Sinkronisasi Database Supabase untuk Tabel Proyek
+                </div>
+                <button className="text-indigo-600 dark:text-indigo-400 font-semibold hover:underline">
+                  {showSqlGuide ? "Sembunyikan" : "Lihat Query SQL"}
+                </button>
+              </div>
+
+              {showSqlGuide && (
+                <div className="pt-2 space-y-2 border-t border-slate-200 dark:border-slate-800">
+                  <p className="text-slate-500 dark:text-slate-400 leading-relaxed">
+                    Sistem sudah otomatis menyimpan proyek ke browser lokal Anda. Jika ingin tabel proyek tersimpan permanen di cloud Supabase, Anda bisa menjalankan query ini di Supabase SQL Editor:
+                  </p>
+                  <pre className="p-3 bg-slate-900 text-slate-100 rounded-xl font-mono text-[11px] overflow-x-auto">
+{`create table if not exists public.projects (
+  id bigint primary key generated always as identity,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  name text unique not null,
+  description text,
+  color text default 'indigo',
+  status text default 'active'
+);
+alter table public.projects disable row level security;`}
+                  </pre>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: STATISTIK & KALENDER HEATMAP */}
         {activeTab === "stats" && (
           <div className="space-y-6">
             {/* Top Stats Cards */}
@@ -1915,21 +2608,23 @@ export default function Home() {
               </h3>
 
               <div className="space-y-3">
-                {Object.entries(stats.projectCounts).map(([proj, count]) => {
+                {projects.map((p) => {
+                  const pData = stats.projectCounts[p.name] || { total: 0 };
+                  const count = pData.total;
                   const percent = stats.total > 0 ? Math.round((count / stats.total) * 100) : 0;
                   return (
                     <div
-                      key={proj}
+                      key={p.name}
                       onClick={() => {
-                        setSelectedProject(proj);
+                        setSelectedProject(p.name);
                         setActiveTab("search");
                       }}
                       className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 hover:border-indigo-400 cursor-pointer transition-all"
                     >
                       <div className="flex justify-between items-center text-xs font-semibold mb-1.5">
                         <span className="text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                          <Layers className="w-3.5 h-3.5 text-indigo-500" />
-                          {proj}
+                          <span className={`w-2.5 h-2.5 rounded-full ${getProjectBarColor(p.color)}`} />
+                          {p.name}
                         </span>
                         <span className="text-slate-500 dark:text-slate-400">
                           {count} catatan ({percent}%)
@@ -1937,7 +2632,7 @@ export default function Home() {
                       </div>
                       <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                         <div
-                          className="bg-indigo-600 h-full rounded-full transition-all duration-500"
+                          className={`h-full rounded-full transition-all duration-500 ${getProjectBarColor(p.color)}`}
                           style={{ width: `${percent}%` }}
                         />
                       </div>
