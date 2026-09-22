@@ -1628,13 +1628,7 @@ export default function Home() {
                 <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
                   Daily Work Repo
                 </h1>
-                <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/40">
-                  Pro Edition
-                </span>
               </div>
-              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-                Manajer Catatan Harian & Arsip Berkas
-              </p>
             </div>
           </div>
 
