@@ -596,7 +596,35 @@ export default function Home() {
 
   const handlePickWindowsFile = () => {
     window.location.href = "dailywork://pick";
-    showToast("Jendela Windows File Explorer terbuka. Pilih berkas, lalu klik 'Tempel Path'.", "success");
+    showToast("Jendela Windows terbuka. Pilih berkas, path akan terisi otomatis.", "success");
+    
+    const onFocus = () => {
+      setTimeout(async () => {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text && (text.includes(":\\") || text.startsWith("\\\\"))) {
+            let clean = text.trim().replace(/^["']|["']$/g, "").trim();
+            clean = clean.replace(/\//g, "\\");
+            
+            setLocalPath(clean);
+            const lastSlash = clean.lastIndexOf("\\");
+            if (lastSlash > 0) {
+              const folder = clean.substring(0, lastSlash + 1);
+              setDefaultFolder(folder);
+              localStorage.setItem("default_local_folder", folder);
+            }
+            const baseName = clean.split("\\").pop() || clean;
+            showToast(`Path otomatis diisi: ${baseName}`, "success");
+          }
+        } catch (err) {
+          console.warn("Auto-paste diblokir browser, gunakan tombol Tempel Path manual.", err);
+        }
+        window.removeEventListener("focus", onFocus);
+      }, 500); // Tunggu sebentar agar clipboard diisi oleh script PowerShell
+    };
+    
+    // Saat dialog windows tertutup, browser akan kembali mendapatkan fokus
+    window.addEventListener("focus", onFocus);
   };
 
   const handleQuickFixPath = async (log: DailyLog) => {
