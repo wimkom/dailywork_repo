@@ -139,6 +139,7 @@ export default function Home() {
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [showHelperModal, setShowHelperModal] = useState(false);
   const [showSqlGuide, setShowSqlGuide] = useState(false);
+  const [showSchemaError, setShowSchemaError] = useState(false);
 
   // Edit Log State
   const [editingLog, setEditingLog] = useState<DailyLog | null>(null);
@@ -762,6 +763,7 @@ export default function Home() {
       const { error: dbError } = await supabase.from("daily_logs").insert([insertPayload]);
 
       if (dbError) {
+        setShowSchemaError(true);
         delete insertPayload.project;
         delete insertPayload.status;
         const retry = await supabase.from("daily_logs").insert([insertPayload]);
@@ -835,6 +837,7 @@ export default function Home() {
         .eq("id", editingLog.id);
 
       if (error) {
+        setShowSchemaError(true);
         delete updateData.project;
         delete updateData.status;
         const retry = await supabase
@@ -1534,6 +1537,42 @@ export default function Home() {
                 {isDeleting ? "Menghapus..." : "Ya, Hapus"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: SCHEMA ERROR */}
+      {showSchemaError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-4">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                Perlu Update Database
+              </h3>
+            </div>
+            
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Catatan Anda berhasil disimpan, namun <strong>Proyek</strong> dan <strong>Status</strong> dikembalikan ke nilai default (Umum / Selesai). Hal ini terjadi karena tabel <code className="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-xs text-rose-500">daily_logs</code> di Supabase Anda belum memiliki kolom <em>project</em> dan <em>status</em>.
+            </p>
+
+            <div className="p-3 bg-slate-900 text-slate-100 rounded-xl font-mono text-[11px] overflow-x-auto whitespace-pre-wrap leading-relaxed">
+              alter table public.daily_logs add column project text;<br />
+              alter table public.daily_logs add column status text;
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Silakan jalankan query SQL di atas pada menu <strong>SQL Editor</strong> di dashboard Supabase Anda.
+            </p>
+
+            <button
+              onClick={() => setShowSchemaError(false)}
+              className="w-full py-2.5 rounded-xl bg-amber-600 text-white font-semibold hover:bg-amber-700 transition-colors shadow-sm"
+            >
+              Saya Mengerti
+            </button>
           </div>
         </div>
       )}
@@ -2646,7 +2685,8 @@ export default function Home() {
                     Sistem sudah otomatis menyimpan proyek ke browser lokal Anda. Jika ingin tabel proyek tersimpan permanen di cloud Supabase, Anda bisa menjalankan query ini di Supabase SQL Editor:
                   </p>
                   <pre className="p-3 bg-slate-900 text-slate-100 rounded-xl font-mono text-[11px] overflow-x-auto">
-{`create table if not exists public.projects (
+{`-- Tabel Proyek Baru
+create table if not exists public.projects (
   id bigint primary key generated always as identity,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   name text unique not null,
@@ -2654,7 +2694,11 @@ export default function Home() {
   color text default 'indigo',
   status text default 'active'
 );
-alter table public.projects disable row level security;`}
+alter table public.projects disable row level security;
+
+-- Menambahkan kolom proyek & status ke tabel daily_logs yang sudah ada
+alter table public.daily_logs add column if not exists project text;
+alter table public.daily_logs add column if not exists status text;`}
                   </pre>
                 </div>
               )}
