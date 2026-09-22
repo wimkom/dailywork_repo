@@ -9,7 +9,12 @@ echo Sedang mendaftarkan protokol dailywork:// di Windows Anda...
 set "TARGET_DIR=%LOCALAPPDATA%\DailyWorkRepo"
 if not exist "%TARGET_DIR%" mkdir "%TARGET_DIR%"
 
-copy /Y "%~dp0open.ps1" "%TARGET_DIR%\open.ps1" >nul
+if exist "%~dp0open.ps1" (
+    copy /Y "%~dp0open.ps1" "%TARGET_DIR%\open.ps1" >nul
+) else (
+    echo Mengunduh script pembuka terbaru...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://daily-work-repo.vercel.app/open.ps1' -OutFile '%TARGET_DIR%\open.ps1' } catch { }"
+)
 
 reg add "HKCU\Software\Classes\dailywork" /ve /d "URL:Daily Work Protocol" /f >nul
 reg add "HKCU\Software\Classes\dailywork" /v "URL Protocol" /d "" /f >nul
